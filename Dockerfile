@@ -3,8 +3,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies needed for node-gyp / native modules if any
-RUN apk add --no-cache python3 make g++
+# Install openssl, libc6-compat and build tools for Alpine
+RUN apk add --no-cache openssl libc6-compat python3 make g++
 
 COPY package*.json tsconfig.json ./
 RUN npm ci
@@ -21,6 +21,9 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+
+# Install openssl and libc6-compat required for Prisma runtime on Alpine
+RUN apk add --no-cache openssl libc6-compat
 
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
