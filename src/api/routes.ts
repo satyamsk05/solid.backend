@@ -7,6 +7,7 @@ import { roundService } from '../rounds/round.service.js';
 import { betService } from '../bets/bet.service.js';
 import { binancePriceService } from '../market/binance.service.js';
 import { SUPPORTED_ASSETS, SUPPORTED_TIMEFRAMES } from '../config.js';
+import { prisma } from '../database/prisma.js';
 import { paymentRequestService } from '../wallet/payment-request.service.js';
 import { adminRouter } from '../admin/admin.routes.js';
 
@@ -110,6 +111,40 @@ apiRouter.post('/wallet/deposit-request', authMiddleware, async (req: Authentica
     return res.status(201).json({ success: true, deposit });
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/wallet/public-deposit-request', async (req: Request, res: Response) => {
+  const { phone, amount, utrNumber } = req.body;
+  const numAmount = parseFloat(amount);
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'Valid deposit amount required' });
+  }
+  if (!phone || typeof phone !== 'string' || phone.trim().length < 10) {
+    return res.status(400).json({ error: 'Valid 10-digit registered phone number is required' });
+  }
+  if (!utrNumber || typeof utrNumber !== 'string' || utrNumber.trim().length < 6) {
+    return res.status(400).json({ error: 'Valid 12-digit UTR / Reference number is required' });
+  }
+
+  const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone: cleanPhone },
+          { phone: `+91${cleanPhone}` },
+        ],
+      },
+    });
+
+    const userId = user ? user.id : `web-${cleanPhone}`;
+    const userDisplayPhone = user ? (user.phone || cleanPhone) : `+91${cleanPhone}`;
+
+    const deposit = paymentRequestService.submitDeposit(userId, userDisplayPhone, numAmount, utrNumber);
+    return res.status(201).json({ success: true, deposit });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Failed to submit deposit request' });
   }
 });
 
