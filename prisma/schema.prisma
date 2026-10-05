@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String         @id @default(uuid())
+  phone          String?        @unique
+  email          String?        @unique
+  name           String?
+  balance        Decimal        @default(0.00) @db.Decimal(15, 2)
+  lockedBalance  Decimal        @default(0.00) @map("locked_balance") @db.Decimal(15, 2)
+  isActive       Boolean        @default(true) @map("is_active")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  bets           Bet[]
+  transactions   Transaction[]
+
+  @@map("users")
+}
+
+model Round {
+  id               String    @id @default(uuid())
+  symbol           String    @db.VarChar(20)
+  timeframe        String    @db.VarChar(10) // 1m, 3m, 5m, 15m
+  startTime        DateTime  @map("start_time")
+  bettingEndTime   DateTime  @map("betting_end_time")
+  endTime          DateTime  @map("end_time")
+  openPrice        Decimal?  @map("open_price") @db.Decimal(20, 8)
+  closePrice       Decimal?  @map("close_price") @db.Decimal(20, 8)
+  status           String    @default("betting") @db.VarChar(20) // betting, locked, completed, cancelled
+  result           String?   @db.VarChar(10) // up, down, draw
+  totalUpAmount    Decimal   @default(0.00) @map("total_up_amount") @db.Decimal(15, 2)
+  totalDownAmount  Decimal   @default(0.00) @map("total_down_amount") @db.Decimal(15, 2)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  bets             Bet[]
+
+  @@unique([symbol, timeframe, startTime])
+  @@index([symbol, timeframe, status], name: "idx_rounds_symbol_timeframe_status")
+  @@index([endTime], name: "idx_rounds_end_time")
+  @@map("rounds")
+}
+
+model Bet {
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  roundId         String    @map("round_id")
+  direction       String    @db.VarChar(10) // up, down
+  amount          Decimal   @db.Decimal(15, 2)
+  potentialPayout Decimal   @map("potential_payout") @db.Decimal(15, 2)
+  status          String    @default("pending") @db.VarChar(20) // pending, won, lost, refunded, cancelled
+  payoutAmount    Decimal   @default(0.00) @map("payout_amount") @db.Decimal(15, 2)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  round           Round     @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@index([userId], name: "idx_bets_user_id")
+  @@index([roundId], name: "idx_bets_round_id")
+  @@index([status], name: "idx_bets_status")
+  @@map("bets")
+}
+
+model Transaction {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  type          String    @db.VarChar(30) // deposit, withdraw, bet_place, bet_won, bet_lost, refund, bonus
+  amount        Decimal   @db.Decimal(15, 2)
+  balanceBefore Decimal   @map("balance_before") @db.Decimal(15, 2)
+  balanceAfter  Decimal   @map("balance_after") @db.Decimal(15, 2)
+  referenceId   String?   @map("reference_id")
+  description   String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], name: "idx_transactions_user_id")
+  @@map("transactions")
+}
+
+model Asset {
+  symbol    String   @id @db.VarChar(20)
+  name      String   @db.VarChar(50)
+  isActive  Boolean  @default(true) @map("is_active")
+  minBet    Decimal  @default(2.00) @map("min_bet") @db.Decimal(15, 2)
+  maxBet    Decimal  @default(10000.00) @map("max_bet") @db.Decimal(15, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("assets")
+}

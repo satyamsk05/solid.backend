@@ -1,0 +1,21 @@
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+
+# OS & Logs
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
