@@ -28,7 +28,12 @@ export class BetService extends EventEmitter {
     });
   }
 
-  public async placeBet(userId: string, roundId: string, direction: 'up' | 'down', amount: number): Promise<BetRecord> {
+  public async placeBet(
+    userId: string,
+    roundId: string,
+    direction: 'up' | 'down',
+    amount: number
+  ): Promise<BetRecord> {
     if (amount <= 0) {
       throw new Error('Bet amount must be greater than 0');
     }
@@ -44,7 +49,7 @@ export class BetService extends EventEmitter {
       throw new Error('Betting window for this round is closed');
     }
 
-    // Lock user funds immediately
+    // Lock user real INR funds immediately
     await walletService.lockFundsForBet(userId, amount, roundId);
 
     const potentialPayout = parseFloat((amount * CONFIG.payoutMultiplier).toFixed(2));
