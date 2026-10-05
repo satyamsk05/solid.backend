@@ -1,25 +1,14 @@
-version: '3.8'
-
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: solidgame_postgres
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solidgame_backend
     restart: always
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: solidgame
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    container_name: solidgame_redis
-    restart: always
-    ports:
-      - "6379:6379"
-
-volumes:
-  pgdata:
+      PORT: 5001
+      NODE_ENV: production

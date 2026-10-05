@@ -14,13 +14,12 @@ export interface UserProfile {
 }
 
 export class AuthService {
-  private otpStore: Map<string, { otp: string; expiresAt: number }> = new Map();
   private users: Map<string, UserProfile> = new Map();
 
   constructor() {}
 
   /**
-   * Initializes a WhatsApp loggin session using key J2T8R6YN
+   * Initializes a WhatsApp loggin session using key from CONFIG
    */
   public initLoggin(): { success: boolean; token: string; link: string; appKey: string } {
     const { token, link } = loggin.createToken(CONFIG.logginAppKey);
@@ -62,38 +61,8 @@ export class AuthService {
     return await this.createSessionForPhone(phone);
   }
 
-  public sendOtp(phone: string): { success: boolean; message: string; otp?: string } {
-    // Standard 6 digit OTP. Default 123456 or generated for verification
-    const otp = phone.endsWith('0000') ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
-    this.otpStore.set(phone, {
-      otp,
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes
-    });
-
-    console.log(`📱 OTP generated for ${phone}: ${otp}`);
-
-    return {
-      success: true,
-      message: 'OTP sent successfully',
-      otp: CONFIG.nodeEnv === 'development' ? otp : undefined,
-    };
-  }
-
-  public async verifyOtp(phone: string, otp: string): Promise<{ token: string; user: UserProfile }> {
-    const record = this.otpStore.get(phone);
-    // Allow master test OTP 123456 in development or valid OTP
-    const isValid = (record && record.otp === otp && Date.now() <= record.expiresAt) || otp === '123456';
-
-    if (!isValid) {
-      throw new Error('Invalid or expired OTP');
-    }
-
-    this.otpStore.delete(phone);
-    return await this.createSessionForPhone(phone);
-  }
-
   public async createSessionForPhone(phone: string): Promise<{ token: string; user: UserProfile }> {
-    // Find or create user
+    // 1. Check in-memory cache
     let user: UserProfile | undefined;
     for (const u of this.users.values()) {
       if (u.phone === phone) {
@@ -102,20 +71,40 @@ export class AuthService {
       }
     }
 
+    // 2. If not in memory, check Database
+    if (!user) {
+      try {
+        const dbUser = await prisma.user.findUnique({ where: { phone } });
+        if (dbUser) {
+          user = {
+            id: dbUser.id,
+            phone: dbUser.phone || phone,
+            name: dbUser.name || `Trader_${phone.slice(-4)}`,
+            balance: Number(dbUser.balance),
+            lockedBalance: Number(dbUser.lockedBalance),
+          };
+          this.users.set(user.id, user);
+        }
+      } catch (e) {
+        // Fallback if DB is offline
+      }
+    }
+
+    // 3. If still not found, create new user
     if (!user) {
       const id = uuidv4();
       user = {
         id,
         phone,
         name: `Trader_${phone.slice(-4)}`,
-        balance: 1000.0,
+        balance: 0.0,
         lockedBalance: 0.0,
       };
       this.users.set(id, user);
 
-      // Initialize DB record
-      prisma.user
-        .create({
+      // Persist in DB
+      try {
+        await prisma.user.create({
           data: {
             id: user.id,
             phone: user.phone,
@@ -123,8 +112,10 @@ export class AuthService {
             balance: user.balance,
             lockedBalance: user.lockedBalance,
           },
-        })
-        .catch(() => {});
+        });
+      } catch (err) {
+        console.warn('⚠️ Could not persist new user to DB:', err);
+      }
     }
 
     // Refresh wallet balances
@@ -133,14 +124,34 @@ export class AuthService {
     user.lockedBalance = wallet.lockedBalance;
 
     const token = jwt.sign({ userId: user.id, phone: user.phone }, CONFIG.jwtSecret, {
-      expiresIn: '30d',
+      expiresIn: (CONFIG.jwtExpiresIn || '7d') as any,
     });
 
     return { token, user };
   }
 
   public async getUserById(userId: string): Promise<UserProfile | null> {
-    const user = this.users.get(userId);
+    let user = this.users.get(userId);
+
+    // If not in cache, fetch from database
+    if (!user) {
+      try {
+        const dbUser = await prisma.user.findUnique({ where: { id: userId } });
+        if (dbUser) {
+          user = {
+            id: dbUser.id,
+            phone: dbUser.phone || '',
+            name: dbUser.name || `Trader_${dbUser.id.slice(-4)}`,
+            balance: Number(dbUser.balance),
+            lockedBalance: Number(dbUser.lockedBalance),
+          };
+          this.users.set(userId, user);
+        }
+      } catch (e) {
+        // Fallback
+      }
+    }
+
     if (!user) return null;
 
     const wallet = await walletService.getWallet(userId);

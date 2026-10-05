@@ -92,7 +92,7 @@ export class RoundService extends EventEmitter {
     const config = TIMEFRAME_CONFIG[timeframe];
     const now = Date.now();
     const liveTick = binancePriceService.getPrice(symbol);
-    const openPrice = liveTick.price > 0 ? liveTick.price : 68000;
+    const openPrice = liveTick.price;
 
     const newRound: ActiveRound = {
       id: uuidv4(),

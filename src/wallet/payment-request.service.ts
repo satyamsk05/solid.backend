@@ -83,6 +83,18 @@ export class PaymentRequestService extends EventEmitter {
     wallet.balance -= amount;
     wallet.lockedBalance += amount;
 
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          balance: wallet.balance,
+          lockedBalance: wallet.lockedBalance,
+        },
+      });
+    } catch (e) {
+      console.warn('⚠️ DB update failed for withdrawal lock:', e);
+    }
+
     const req: WithdrawalRequest = {
       id: uuidv4(),
       userId,
@@ -136,6 +148,29 @@ export class PaymentRequestService extends EventEmitter {
     const wallet = await walletService.getWallet(req.userId);
     wallet.lockedBalance = Math.max(0, wallet.lockedBalance - req.amount);
 
+    try {
+      await prisma.user.update({
+        where: { id: req.userId },
+        data: {
+          lockedBalance: wallet.lockedBalance,
+        },
+      });
+      await prisma.transaction.create({
+        data: {
+          id: uuidv4(),
+          userId: req.userId,
+          type: 'withdraw',
+          amount: req.amount,
+          balanceBefore: wallet.balance,
+          balanceAfter: wallet.balance,
+          referenceId: req.id,
+          description: `UPI Withdrawal of ₹${req.amount.toFixed(2)} to ${req.upiId} approved`,
+        },
+      });
+    } catch (e) {
+      console.warn('⚠️ DB update failed for withdrawal approval:', e);
+    }
+
     this.emit('withdrawal_approved', req);
     return req;
   }
@@ -152,6 +187,30 @@ export class PaymentRequestService extends EventEmitter {
     const wallet = await walletService.getWallet(req.userId);
     wallet.lockedBalance = Math.max(0, wallet.lockedBalance - req.amount);
     wallet.balance += req.amount;
+
+    try {
+      await prisma.user.update({
+        where: { id: req.userId },
+        data: {
+          balance: wallet.balance,
+          lockedBalance: wallet.lockedBalance,
+        },
+      });
+      await prisma.transaction.create({
+        data: {
+          id: uuidv4(),
+          userId: req.userId,
+          type: 'refund',
+          amount: req.amount,
+          balanceBefore: wallet.balance - req.amount,
+          balanceAfter: wallet.balance,
+          referenceId: req.id,
+          description: `Withdrawal request rejected - ₹${req.amount.toFixed(2)} refunded to wallet`,
+        },
+      });
+    } catch (e) {
+      console.warn('⚠️ DB update failed for withdrawal rejection:', e);
+    }
 
     this.emit('withdrawal_rejected', req);
     return req;

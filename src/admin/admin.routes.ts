@@ -3,13 +3,23 @@ import { paymentRequestService } from '../wallet/payment-request.service.js';
 import { roundService } from '../rounds/round.service.js';
 import { binancePriceService } from '../market/binance.service.js';
 
+import crypto from 'crypto';
+import { CONFIG } from '../config.js';
+
 export const adminRouter = Router();
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY || 'super-admin-secret-2026';
-
 function adminAuth(req: Request, res: Response, next: NextFunction) {
-  const key = req.headers['x-admin-key'] || req.query.admin_key;
-  if (key !== ADMIN_SECRET) {
+  const key = req.headers['x-admin-key'];
+  const expected = CONFIG.adminSecretKey;
+
+  if (!key || typeof key !== 'string' || !expected) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or missing Admin Secret Key' });
+  }
+
+  const keyBuf = Buffer.from(key);
+  const expBuf = Buffer.from(expected);
+
+  if (keyBuf.length !== expBuf.length || !crypto.timingSafeEqual(keyBuf, expBuf)) {
     return res.status(401).json({ error: 'Unauthorized: Invalid Admin Secret Key' });
   }
   next();

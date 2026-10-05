@@ -20,8 +20,11 @@ async function runTests() {
   const testUserId = `test-user-${Date.now()}`;
   const initialWallet = await walletService.getWallet(testUserId);
 
-  assert.strictEqual(initialWallet.balance, 1000.0, 'Initial real balance must be ₹1,000.00');
+  assert.strictEqual(initialWallet.balance, 0.0, 'Initial real balance must be ₹0.00 for new user');
   assert.strictEqual(initialWallet.lockedBalance, 0.0, 'Initial locked balance must be ₹0.00');
+
+  // Deposit initial test funds
+  await walletService.deposit(testUserId, 1000.0, 'test-deposit-1');
 
   // Lock real funds
   await walletService.lockFundsForBet(testUserId, 200, 'round-real-1');

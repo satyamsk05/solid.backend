@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { authService } from '../auth/auth.service.js';
 import { authMiddleware, AuthenticatedRequest } from '../auth/auth.middleware.js';
 import { walletService } from '../wallet/wallet.service.js';
@@ -13,9 +14,18 @@ export const apiRouter = Router();
 
 apiRouter.use('/admin', adminRouter);
 
+// Rate limiter for WhatsApp auth initialization
+const logginRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many WhatsApp auth requests. Please wait a minute.' },
+});
+
 // ================= AUTH ROUTES =================
-// Loggin.dev WhatsApp Auth (Key: J2T8R6YN)
-apiRouter.post('/auth/loggin-init', (_req: Request, res: Response) => {
+// Loggin.dev 1-Tap WhatsApp Auth (Key: CONFIG.logginAppKey)
+apiRouter.post('/auth/loggin-init', logginRateLimiter, (_req: Request, res: Response) => {
   try {
     const session = authService.initLoggin();
     return res.json(session);
@@ -34,28 +44,6 @@ apiRouter.post('/auth/loggin-verify', async (req: Request, res: Response) => {
     return res.json(result);
   } catch (err: any) {
     return res.status(400).json({ error: err.message || 'WhatsApp verification failed' });
-  }
-});
-
-apiRouter.post('/auth/send-otp', (req: Request, res: Response) => {
-  const { phone } = req.body;
-  if (!phone || typeof phone !== 'string') {
-    return res.status(400).json({ error: 'Valid phone number is required' });
-  }
-  const result = authService.sendOtp(phone);
-  return res.json(result);
-});
-
-apiRouter.post('/auth/verify-otp', async (req: Request, res: Response) => {
-  const { phone, otp } = req.body;
-  if (!phone || !otp) {
-    return res.status(400).json({ error: 'Phone and OTP are required' });
-  }
-  try {
-    const result = await authService.verifyOtp(phone, otp);
-    return res.json(result);
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message || 'OTP verification failed' });
   }
 });
 
@@ -88,32 +76,17 @@ apiRouter.get('/wallet/transactions', authMiddleware, (req: AuthenticatedRequest
   }
 });
 
-apiRouter.post('/wallet/deposit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  const { amount } = req.body;
-  const numAmount = parseFloat(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return res.status(400).json({ error: 'Valid deposit amount required' });
-  }
-  try {
-    const wallet = await walletService.deposit(req.userId!, numAmount);
-    return res.json({ success: true, wallet });
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message });
-  }
+// Disabled direct unverified deposit/withdraw endpoints to prevent unauthorized balance injection
+apiRouter.post('/wallet/deposit', authMiddleware, (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(403).json({
+    error: 'Direct balance deposits are disabled for security. Please submit a deposit request with UTR via /wallet/deposit-request.',
+  });
 });
 
-apiRouter.post('/wallet/withdraw', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  const { amount } = req.body;
-  const numAmount = parseFloat(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return res.status(400).json({ error: 'Valid withdrawal amount required' });
-  }
-  try {
-    const wallet = await walletService.withdraw(req.userId!, numAmount);
-    return res.json({ success: true, wallet });
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message });
-  }
+apiRouter.post('/wallet/withdraw', authMiddleware, (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(403).json({
+    error: 'Direct unmonitored withdrawals are disabled for security. Please submit a withdrawal request with UPI ID via /wallet/withdraw-request.',
+  });
 });
 
 apiRouter.get('/wallet/upi-details', (_req: Request, res: Response) => {

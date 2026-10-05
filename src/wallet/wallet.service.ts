@@ -27,12 +27,32 @@ export class WalletService {
   // In-memory cache for fast lookups & fallbacks
   private wallets: Map<string, UserWallet> = new Map();
   private transactions: WalletTransaction[] = [];
+  private userLocks: Map<string, Promise<void>> = new Map();
 
   constructor() {}
 
+  private async withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const currentLock = this.userLocks.get(userId) || Promise.resolve();
+    let release: () => void;
+    const nextLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.userLocks.set(userId, currentLock.then(() => nextLock));
+
+    try {
+      await currentLock;
+      return await fn();
+    } finally {
+      release!();
+      if (this.userLocks.get(userId) === nextLock) {
+        this.userLocks.delete(userId);
+      }
+    }
+  }
+
   public async getWallet(userId: string): Promise<UserWallet> {
     if (!this.wallets.has(userId)) {
-      let realBalance = 1000.0;
+      let realBalance = 0.0;
       let realLocked = 0.0;
 
       try {
@@ -57,121 +77,142 @@ export class WalletService {
   }
 
   public async deposit(userId: string, amount: number, referenceId?: string): Promise<UserWallet> {
-    if (amount <= 0) throw new Error('Deposit amount must be positive');
-    const safeAmount = round2(amount);
-    const wallet = await this.getWallet(userId);
-    const before = wallet.balance;
-    wallet.balance = round2(wallet.balance + safeAmount);
-    const after = wallet.balance;
+    return this.withUserLock(userId, async () => {
+      if (amount <= 0) throw new Error('Deposit amount must be positive');
+      const safeAmount = round2(amount);
+      const wallet = await this.getWallet(userId);
+      const before = wallet.balance;
+      wallet.balance = round2(wallet.balance + safeAmount);
+      const after = wallet.balance;
 
-    const tx: WalletTransaction = {
-      id: uuidv4(),
-      userId,
-      type: 'deposit',
-      amount: safeAmount,
-      balanceBefore: before,
-      balanceAfter: after,
-      referenceId,
-      description: `INR Deposit of ₹${safeAmount.toFixed(2)}`,
-      createdAt: Date.now(),
-    };
-    this.transactions.unshift(tx);
+      const tx: WalletTransaction = {
+        id: uuidv4(),
+        userId,
+        type: 'deposit',
+        amount: safeAmount,
+        balanceBefore: before,
+        balanceAfter: after,
+        referenceId,
+        description: `INR Deposit of ₹${safeAmount.toFixed(2)}`,
+        createdAt: Date.now(),
+      };
+      this.transactions.unshift(tx);
 
-    prisma.user
-      .update({
-        where: { id: userId },
-        data: { balance: wallet.balance },
-      })
-      .catch(() => {});
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { balance: wallet.balance },
+        });
+        await prisma.transaction.create({
+          data: {
+            id: tx.id,
+            userId,
+            type: tx.type,
+            amount: tx.amount,
+            balanceBefore: tx.balanceBefore,
+            balanceAfter: tx.balanceAfter,
+            referenceId: tx.referenceId,
+            description: tx.description,
+          },
+        });
+      } catch (err) {
+        console.warn('⚠️ DB update failed for deposit:', err);
+      }
 
-    prisma.transaction
-      .create({
-        data: {
-          id: tx.id,
-          userId,
-          type: tx.type,
-          amount: tx.amount,
-          balanceBefore: tx.balanceBefore,
-          balanceAfter: tx.balanceAfter,
-          referenceId: tx.referenceId,
-          description: tx.description,
-        },
-      })
-      .catch(() => {});
-
-    return wallet;
+      return wallet;
+    });
   }
 
   public async withdraw(userId: string, amount: number): Promise<UserWallet> {
-    if (amount <= 0) throw new Error('Withdrawal amount must be positive');
-    const safeAmount = round2(amount);
-    const wallet = await this.getWallet(userId);
-    if (wallet.balance < safeAmount) {
-      throw new Error(`Insufficient available balance (Available: ₹${wallet.balance.toFixed(2)})`);
-    }
+    return this.withUserLock(userId, async () => {
+      if (amount <= 0) throw new Error('Withdrawal amount must be positive');
+      const safeAmount = round2(amount);
+      const wallet = await this.getWallet(userId);
+      if (wallet.balance < safeAmount) {
+        throw new Error(`Insufficient available balance (Available: ₹${wallet.balance.toFixed(2)})`);
+      }
 
-    const before = wallet.balance;
-    wallet.balance = round2(wallet.balance - safeAmount);
-    const after = wallet.balance;
+      const before = wallet.balance;
+      wallet.balance = round2(wallet.balance - safeAmount);
+      const after = wallet.balance;
 
-    const tx: WalletTransaction = {
-      id: uuidv4(),
-      userId,
-      type: 'withdraw',
-      amount: safeAmount,
-      balanceBefore: before,
-      balanceAfter: after,
-      description: `INR Withdrawal of ₹${safeAmount.toFixed(2)}`,
-      createdAt: Date.now(),
-    };
-    this.transactions.unshift(tx);
+      const tx: WalletTransaction = {
+        id: uuidv4(),
+        userId,
+        type: 'withdraw',
+        amount: safeAmount,
+        balanceBefore: before,
+        balanceAfter: after,
+        description: `INR Withdrawal of ₹${safeAmount.toFixed(2)}`,
+        createdAt: Date.now(),
+      };
+      this.transactions.unshift(tx);
 
-    prisma.user
-      .update({
-        where: { id: userId },
-        data: { balance: wallet.balance },
-      })
-      .catch(() => {});
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { balance: wallet.balance },
+        });
+        await prisma.transaction.create({
+          data: {
+            id: tx.id,
+            userId,
+            type: tx.type,
+            amount: tx.amount,
+            balanceBefore: tx.balanceBefore,
+            balanceAfter: tx.balanceAfter,
+            referenceId: tx.referenceId,
+            description: tx.description,
+          },
+        });
+      } catch (err) {
+        console.warn('⚠️ DB update failed for withdraw:', err);
+      }
 
-    return wallet;
+      return wallet;
+    });
   }
 
   public async lockFundsForBet(userId: string, amount: number, roundId: string): Promise<UserWallet> {
-    const safeAmount = round2(amount);
-    const wallet = await this.getWallet(userId);
+    return this.withUserLock(userId, async () => {
+      const safeAmount = round2(amount);
+      const wallet = await this.getWallet(userId);
 
-    if (wallet.balance < safeAmount) {
-      throw new Error(`Insufficient balance (Available: ₹${wallet.balance.toFixed(2)}, Required: ₹${safeAmount.toFixed(2)})`);
-    }
+      if (wallet.balance < safeAmount) {
+        throw new Error(`Insufficient balance (Available: ₹${wallet.balance.toFixed(2)}, Required: ₹${safeAmount.toFixed(2)})`);
+      }
 
-    const before = wallet.balance;
-    wallet.balance = round2(wallet.balance - safeAmount);
-    wallet.lockedBalance = round2(wallet.lockedBalance + safeAmount);
+      const before = wallet.balance;
+      wallet.balance = round2(wallet.balance - safeAmount);
+      wallet.lockedBalance = round2(wallet.lockedBalance + safeAmount);
 
-    const tx: WalletTransaction = {
-      id: uuidv4(),
-      userId,
-      type: 'bet_place',
-      amount: safeAmount,
-      balanceBefore: before,
-      balanceAfter: wallet.balance,
-      referenceId: roundId,
-      description: `Bet placed: ₹${safeAmount.toFixed(2)} locked`,
-      createdAt: Date.now(),
-    };
-    this.transactions.unshift(tx);
+      const tx: WalletTransaction = {
+        id: uuidv4(),
+        userId,
+        type: 'bet_place',
+        amount: safeAmount,
+        balanceBefore: before,
+        balanceAfter: wallet.balance,
+        referenceId: roundId,
+        description: `Bet placed: ₹${safeAmount.toFixed(2)} locked`,
+        createdAt: Date.now(),
+      };
+      this.transactions.unshift(tx);
 
-    prisma.user
-      .update({
-        where: { id: userId },
-        data: {
-          balance: wallet.balance,
-          lockedBalance: wallet.lockedBalance,
-        },
-      })
-      .catch(() => {});
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            balance: wallet.balance,
+            lockedBalance: wallet.lockedBalance,
+          },
+        });
+      } catch (err) {
+        console.warn('⚠️ DB update failed for lockFundsForBet:', err);
+      }
 
-    return wallet;
+      return wallet;
+    });
   }
 
   public async settleWonBet(userId: string, betAmount: number, payoutAmount: number, roundId: string): Promise<UserWallet> {

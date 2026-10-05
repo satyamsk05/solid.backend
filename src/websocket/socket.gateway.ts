@@ -1,5 +1,7 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
+import jwt from 'jsonwebtoken';
+import { CONFIG } from '../config.js';
 import { binancePriceService, PriceTick } from '../market/binance.service.js';
 import { roundService, ActiveRound } from '../rounds/round.service.js';
 import { betService } from '../bets/bet.service.js';
@@ -22,11 +24,31 @@ export class SocketGateway {
     this.io.on('connection', (socket: Socket) => {
       console.log(`🔌 Client connected to WebSocket: ${socket.id}`);
 
-      // Handle user registration for personal notifications
-      socket.on('authenticate', (data: { userId: string }) => {
-        if (data && data.userId) {
-          socket.join(`user:${data.userId}`);
-          console.log(`👤 Socket ${socket.id} joined user channel: user:${data.userId}`);
+      // Handle user registration for personal notifications with JWT verification
+      socket.on('authenticate', (data: { token?: string; userId?: string }) => {
+        if (!data) return;
+
+        let verifiedUserId: string | null = null;
+
+        if (data.token) {
+          try {
+            const decoded = jwt.verify(data.token, CONFIG.jwtSecret) as { userId: string };
+            verifiedUserId = decoded.userId;
+          } catch (err) {
+            socket.emit('auth_error', { message: 'Invalid or expired WebSocket authentication token' });
+            return;
+          }
+        } else if (CONFIG.nodeEnv === 'development' && data.userId) {
+          // Permitted only in local development testing
+          verifiedUserId = data.userId;
+        } else {
+          socket.emit('auth_error', { message: 'Authentication token is required to subscribe to private events' });
+          return;
+        }
+
+        if (verifiedUserId) {
+          socket.join(`user:${verifiedUserId}`);
+          console.log(`👤 Socket ${socket.id} securely joined user channel: user:${verifiedUserId}`);
         }
       });
 
